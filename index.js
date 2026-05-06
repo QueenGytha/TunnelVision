@@ -32,7 +32,7 @@ import { initAutoSummary } from './auto-summary.js';
 import { runSidecarRetrieval } from './sidecar-retrieval.js';
 import { runSidecarWriter } from './sidecar-writer.js';
 import { separateConditions, isEvaluableCondition, formatCondition, EVALUABLE_TYPES, CONDITION_LABELS, getKeywordProbability, setKeywordProbability } from './conditions.js';
-import { loadWorldInfo, saveWorldInfo, world_names, createNewWorldInfo, updateWorldInfoList, createWorldInfoEntry } from '../../../world-info.js';
+import { loadWorldInfo, saveWorldInfo, world_names, createNewWorldInfo, updateWorldInfoList, createWorldInfoEntry, METADATA_KEY } from '../../../world-info.js';
 import { invalidateDirtyWorldInfoCache } from './entry-manager.js';
 import { initWorldState, buildWorldStatePrompt } from './world-state.js';
 import { initPostTurnProcessor } from './post-turn-processor.js';
@@ -614,7 +614,6 @@ const TV_PROMPT_KEY = 'tunnelvision_mandatory';
 const TV_NOTEBOOK_KEY = 'tunnelvision_notebook';
 const TV_WORLDSTATE_KEY = 'tunnelvision_worldstate';
 const TV_SMARTCTX_KEY = 'tunnelvision_smartctx';
-const TV_CHAT_LOREBOOK_KEY = 'tv_chat_lorebook';
 
 /**
  * Map a position setting string to the ST extension_prompt_types enum.
@@ -1007,8 +1006,7 @@ async function ensureChatLorebook() {
     const shortId = String(chatId).slice(-8);
     const bookName = `TV - ${charName} - ${shortId}`;
 
-    const stored = chat_metadata[TV_CHAT_LOREBOOK_KEY];
-    if (stored === bookName && world_names.includes(bookName)) {
+    if (chat_metadata[METADATA_KEY] === bookName && world_names.includes(bookName)) {
         if (!isLorebookEnabled(bookName)) setLorebookEnabled(bookName, true);
         return;
     }
@@ -1017,14 +1015,18 @@ async function ensureChatLorebook() {
         await createNewWorldInfo(bookName);
         await updateWorldInfoList();
 
-        const activeBooks = getActiveTunnelVisionBooks();
-        if (activeBooks.length > 0) {
+        // Collect seed sources: TV-enabled books + existing per-chat lorebook
+        const seedSources = new Set();
+        for (const b of getActiveTunnelVisionBooks()) seedSources.add(b);
+        const existingChatBook = chat_metadata[METADATA_KEY];
+        if (existingChatBook && existingChatBook !== bookName) seedSources.add(existingChatBook);
+
+        if (seedSources.size > 0) {
             const newBookData = await loadWorldInfo(bookName);
             if (newBookData) {
                 let seeded = false;
-                for (const book of activeBooks) {
-                    if (book.bookName === bookName) continue;
-                    const sourceData = await loadWorldInfo(book.bookName);
+                for (const sourceName of seedSources) {
+                    const sourceData = await loadWorldInfo(sourceName);
                     if (!sourceData?.entries) continue;
                     for (const key of Object.keys(sourceData.entries)) {
                         const src = sourceData.entries[key];
@@ -1044,7 +1046,8 @@ async function ensureChatLorebook() {
     }
 
     setLorebookEnabled(bookName, true);
-    chat_metadata[TV_CHAT_LOREBOOK_KEY] = bookName;
+    // Store under ST's native key so getActiveTunnelVisionBooks() picks it up
+    chat_metadata[METADATA_KEY] = bookName;
     await saveMetadata();
     console.log(`[TunnelVision] Chat lorebook ready: "${bookName}"`);
 }
