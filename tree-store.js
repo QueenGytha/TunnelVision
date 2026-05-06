@@ -324,24 +324,24 @@ export const SETTING_DEFAULTS = {
     // Compact tool prompts: register one guide tool + one-liner descriptions to save tokens
     compactToolPrompts: true,
     // Post-turn autonomous processor
-    postTurnEnabled: false,
+    postTurnEnabled: true,
     postTurnCooldown: 1,
     postTurnExtractFacts: true,
     postTurnUpdateTrackers: true,
     postTurnSceneArchive: true,
     // World state rolling narrative
-    worldStateEnabled: false,
+    worldStateEnabled: true,
     worldStateInterval: 10,
     worldStateMaxChars: 3000,
     worldStateInjectionOverride: null,
     worldStateUpdateOverride: null,
     // Smart context pre-scored injection
-    smartContextEnabled: false,
+    smartContextEnabled: true,
     smartContextLookback: 6,
     smartContextMaxChars: 4000,
     smartContextMaxEntries: 8,
     // Memory lifecycle maintenance
-    lifecycleEnabled: false,
+    lifecycleEnabled: true,
     lifecycleInterval: 30,
     lifecycleConsolidate: true,
     lifecycleCompress: true,
