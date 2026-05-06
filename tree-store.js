@@ -286,7 +286,7 @@ export const SETTING_DEFAULTS = {
     treeGranularity: 0,
     llmChunkTokens: 30000,
     commandContextMessages: 50,
-    autoSummaryEnabled: false,
+    autoSummaryEnabled: true,
     autoSummaryInterval: 20,
     multiBookMode: 'unified',
     trackerUids: {},
