@@ -18,12 +18,12 @@
  *   auto-summary.js — Automatic summary injection every N messages.
  */
 
-import { eventSource, event_types, extension_prompt_types, extension_prompt_roles, setExtensionPrompt, saveSettingsDebounced, main_api } from '../../../../script.js';
+import { eventSource, event_types, extension_prompt_types, extension_prompt_roles, setExtensionPrompt, saveSettingsDebounced, main_api, chat_metadata, saveMetadata } from '../../../../script.js';
 import { getContext } from '../../../st-context.js';
 import { ToolManager } from '../../../tool-calling.js';
 import { renderExtensionTemplateAsync } from '../../../extensions.js';
 import { getSettings, isLorebookEnabled, setLorebookEnabled } from './tree-store.js';
-import { preflightToolRuntimeState, registerTools } from './tool-registry.js';
+import { preflightToolRuntimeState, registerTools, getActiveTunnelVisionBooks } from './tool-registry.js';
 import { buildNotebookPrompt, resetNotebookWriteGuard } from './tools/notebook.js';
 import { bindUIEvents, refreshUI } from './ui-controller.js';
 import { initActivityFeed } from './activity-feed.js';
@@ -32,7 +32,12 @@ import { initAutoSummary } from './auto-summary.js';
 import { runSidecarRetrieval } from './sidecar-retrieval.js';
 import { runSidecarWriter } from './sidecar-writer.js';
 import { separateConditions, isEvaluableCondition, formatCondition, EVALUABLE_TYPES, CONDITION_LABELS, getKeywordProbability, setKeywordProbability } from './conditions.js';
-import { loadWorldInfo, saveWorldInfo, world_names } from '../../../world-info.js';
+import { loadWorldInfo, saveWorldInfo, world_names, createNewWorldInfo, updateWorldInfoList, createWorldInfoEntry } from '../../../world-info.js';
+import { invalidateDirtyWorldInfoCache } from './entry-manager.js';
+import { initWorldState, buildWorldStatePrompt } from './world-state.js';
+import { initPostTurnProcessor } from './post-turn-processor.js';
+import { initMemoryLifecycle } from './memory-lifecycle.js';
+import { initSmartContext, buildSmartContextPrompt } from './smart-context.js';
 
 const EXTENSION_NAME = 'tunnelvision';
 const EXTENSION_FOLDER = `third-party/TunnelVision`;
@@ -71,6 +76,12 @@ async function init() {
 
     // Wire up auto-summary interval tracking
     initAutoSummary();
+
+    // Initialize autonomous memory systems
+    initWorldState();
+    initPostTurnProcessor();
+    initMemoryLifecycle();
+    initSmartContext();
 
     // Inject condition editor into ST's base lorebook editor
     initWIConditionInjector();
@@ -164,6 +175,7 @@ async function init() {
 
 async function onChatChanged() {
     autoDetectLorebooks();
+    await ensureChatLorebook();
     refreshUI();
     await registerTools();
 }
@@ -600,6 +612,9 @@ function onWorldInfoActivatedForTracking(entryList) {
 
 const TV_PROMPT_KEY = 'tunnelvision_mandatory';
 const TV_NOTEBOOK_KEY = 'tunnelvision_notebook';
+const TV_WORLDSTATE_KEY = 'tunnelvision_worldstate';
+const TV_SMARTCTX_KEY = 'tunnelvision_smartctx';
+const TV_CHAT_LOREBOOK_KEY = 'tv_chat_lorebook';
 
 /**
  * Map a position setting string to the ST extension_prompt_types enum.
@@ -826,6 +841,7 @@ async function onGenerationStarted(type, opts, dryRun) {
     // GENERATION_ENDED to clear it, so it would stay true forever and block tool re-registration.
     if (dryRun) return;
 
+    invalidateDirtyWorldInfoCache();
     _generationInProgress = true;
 
     // Detect recursive tool-call passes FIRST, before any other work.
@@ -931,6 +947,22 @@ async function onGenerationStarted(type, opts, dryRun) {
     } else {
         setExtensionPrompt(TV_NOTEBOOK_KEY, '', notebookPosition, notebookDepth, false, notebookRole);
     }
+
+    // World state injection
+    if (settings.globalEnabled !== false && settings.worldStateEnabled) {
+        const wsPrompt = buildWorldStatePrompt();
+        setExtensionPrompt(TV_WORLDSTATE_KEY, wsPrompt || '', extension_prompt_types.IN_CHAT, 0, false, extension_prompt_roles.SYSTEM);
+    } else {
+        setExtensionPrompt(TV_WORLDSTATE_KEY, '', extension_prompt_types.IN_CHAT, 0, false, extension_prompt_roles.SYSTEM);
+    }
+
+    // Smart context injection
+    if (settings.globalEnabled !== false && settings.smartContextEnabled) {
+        const scPrompt = buildSmartContextPrompt();
+        setExtensionPrompt(TV_SMARTCTX_KEY, scPrompt || '', extension_prompt_types.IN_CHAT, 0, false, extension_prompt_roles.SYSTEM);
+    } else {
+        setExtensionPrompt(TV_SMARTCTX_KEY, '', extension_prompt_types.IN_CHAT, 0, false, extension_prompt_roles.SYSTEM);
+    }
 }
 
 /**
@@ -957,6 +989,64 @@ async function onMessageReceived(_messageId, type) {
     } catch (err) {
         console.error('[TunnelVision] Sidecar post-gen writer error:', err);
     }
+}
+
+/**
+ * Ensure a per-chat TV-managed lorebook exists and is enabled.
+ * Named "TV - {char} - {shortChatId}". Seeded from other TV-managed lorebooks on first creation.
+ */
+async function ensureChatLorebook() {
+    const settings = getSettings();
+    if (!settings.chatLorebooksEnabled) return;
+
+    const context = getContext();
+    const chatId = context.getCurrentChatId?.() || context.chatId;
+    if (!chatId) return;
+
+    const charName = (context.name2 || 'Unknown').replace(/[/\\:*?"<>|]/g, '_');
+    const shortId = String(chatId).slice(-8);
+    const bookName = `TV - ${charName} - ${shortId}`;
+
+    const stored = chat_metadata[TV_CHAT_LOREBOOK_KEY];
+    if (stored === bookName && world_names.includes(bookName)) {
+        if (!isLorebookEnabled(bookName)) setLorebookEnabled(bookName, true);
+        return;
+    }
+
+    if (!world_names.includes(bookName)) {
+        await createNewWorldInfo(bookName);
+        await updateWorldInfoList();
+
+        const activeBooks = getActiveTunnelVisionBooks();
+        if (activeBooks.length > 0) {
+            const newBookData = await loadWorldInfo(bookName);
+            if (newBookData) {
+                let seeded = false;
+                for (const book of activeBooks) {
+                    if (book.bookName === bookName) continue;
+                    const sourceData = await loadWorldInfo(book.bookName);
+                    if (!sourceData?.entries) continue;
+                    for (const key of Object.keys(sourceData.entries)) {
+                        const src = sourceData.entries[key];
+                        if (src.disable) continue;
+                        const newEntry = createWorldInfoEntry(bookName, newBookData);
+                        if (newEntry) {
+                            newEntry.content = src.content;
+                            newEntry.comment = src.comment;
+                            newEntry.key = [...(src.key || [])];
+                            seeded = true;
+                        }
+                    }
+                }
+                if (seeded) await saveWorldInfo(bookName, newBookData, true);
+            }
+        }
+    }
+
+    setLorebookEnabled(bookName, true);
+    chat_metadata[TV_CHAT_LOREBOOK_KEY] = bookName;
+    await saveMetadata();
+    console.log(`[TunnelVision] Chat lorebook ready: "${bookName}"`);
 }
 
 /**

@@ -69,6 +69,7 @@ export async function createEntry(bookName, { content, comment, keys, nodeId }) 
 
     // Persist to disk
     await saveWorldInfo(bookName, bookData, true);
+    invalidateWorldInfoCache(bookName);
 
     // Assign to tree node
     let nodeLabel = 'Root';
@@ -137,6 +138,7 @@ export async function updateEntry(bookName, uid, updates) {
     }
 
     await saveWorldInfo(bookName, bookData, true);
+    invalidateWorldInfoCache(bookName);
     if (entry.disable) {
         setTrackerUid(bookName, uid, false);
     } else if (isTrackerTitle(entry.comment) || isTrackerUid(bookName, uid)) {
@@ -183,6 +185,7 @@ export async function forgetEntry(bookName, uid, hardDelete = false) {
     }
 
     await saveWorldInfo(bookName, bookData, true);
+    invalidateWorldInfoCache(bookName);
 
     // Remove from tree regardless
     const tree = getTree(bookName);
@@ -365,6 +368,7 @@ export async function mergeEntries(bookName, keepUid, removeUid, opts = {}) {
     }
 
     await saveWorldInfo(bookName, bookData, true);
+    invalidateWorldInfoCache(bookName);
 
     // Remove absorbed entry from tree
     const tree = getTree(bookName);
@@ -426,6 +430,7 @@ export async function splitEntry(bookName, uid, { keepContent, keepTitle, newCon
     }
 
     await saveWorldInfo(bookName, bookData, true);
+    invalidateWorldInfoCache(bookName);
 
     // Find the node the original lives in, so we can place the new entry alongside it
     const tree = getTree(bookName);
@@ -481,3 +486,131 @@ function findNodeContainingUid(node, uid) {
     }
     return null;
 }
+
+// --- World info cache ---
+
+const _wiCache = new Map();
+const _dirtySinceLastGen = new Set();
+
+export async function getCachedWorldInfo(bookName) {
+    if (_wiCache.has(bookName)) return _wiCache.get(bookName);
+    const data = await loadWorldInfo(bookName);
+    if (data) _wiCache.set(bookName, data);
+    return data;
+}
+
+export function getCachedWorldInfoSync(bookName) {
+    return _wiCache.get(bookName) ?? null;
+}
+
+export function invalidateWorldInfoCache(bookName) {
+    _wiCache.delete(bookName);
+    _dirtySinceLastGen.add(bookName);
+}
+
+export function invalidateDirtyWorldInfoCache() {
+    for (const bookName of _dirtySinceLastGen) {
+        _wiCache.delete(bookName);
+    }
+    _dirtySinceLastGen.clear();
+}
+
+// --- UID map builder ---
+
+export function buildUidMap(entries) {
+    const map = new Map();
+    for (const key of Object.keys(entries || {})) {
+        const entry = entries[key];
+        if (entry?.uid !== undefined) map.set(entry.uid, entry);
+    }
+    return map;
+}
+
+// --- JSON parsing ---
+
+export function parseJsonFromLLM(text, opts = {}) {
+    if (!text) return null;
+    const cleaned = String(text).replace(/```(?:json)?\s*/gi, '').replace(/```\s*/g, '').trim();
+    try {
+        const parsed = JSON.parse(cleaned);
+        if (opts.type === 'array') return Array.isArray(parsed) ? parsed : null;
+        if (opts.type === 'object') return (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) ? parsed : null;
+        return parsed;
+    } catch {
+        const match = cleaned.match(/(\{[\s\S]*\}|\[[\s\S]*\])/);
+        if (match) {
+            try {
+                const parsed = JSON.parse(match[1]);
+                if (opts.type === 'array') return Array.isArray(parsed) ? parsed : null;
+                if (opts.type === 'object') return (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) ? parsed : null;
+                return parsed;
+            } catch { return null; }
+        }
+        return null;
+    }
+}
+
+// --- Temporal / versioning metadata ---
+
+export function recordEntryTemporal(entry, turnIndex) {
+    if (!entry) return;
+    entry.tvTurnIndex = Number(turnIndex) || 0;
+}
+
+export function recordEntryVersion(entry) {
+    if (!entry) return;
+    if (!Array.isArray(entry.tvVersions)) entry.tvVersions = [];
+    entry.tvVersions.push({ content: entry.content, comment: entry.comment, ts: Date.now() });
+    if (entry.tvVersions.length > 10) entry.tvVersions.shift();
+}
+
+export function getEntryTurnIndex(entry) {
+    return entry?.tvTurnIndex ?? -1;
+}
+
+export function setEntrySupersedes(entry, uid) {
+    if (!entry) return;
+    entry.tvSupersedes = Number(uid);
+}
+
+// --- Summary key builder ---
+
+export function buildSummaryKeys(parsed, participants = [], significance = 'moderate') {
+    const keys = [];
+    if (Array.isArray(parsed.keys)) {
+        keys.push(...parsed.keys.map(k => String(k).toLowerCase().trim()));
+    }
+    if (participants.length) {
+        keys.push(...participants.map(p => String(p).toLowerCase().trim()));
+    }
+    if (significance && significance !== 'moderate') {
+        keys.push(`significance:${significance}`);
+    }
+    if (parsed.arc) keys.push(String(parsed.arc).toLowerCase());
+    if (parsed.when) keys.push(String(parsed.when).toLowerCase());
+    return [...new Set(keys.filter(Boolean))];
+}
+
+// --- LLM prompt constants ---
+
+export const KEYWORD_RULES = 'KEYWORD RULES: Include 3-6 keywords — character names, locations, themes, and unique terms. Use lowercase. Avoid generic words like "scene" or "event".';
+
+export const SUMMARY_STYLE_RULES = 'STYLE: Write in flowing prose, past tense, third person. Be specific about names and details. Include emotional beats and narrative significance. Avoid bullet points.';
+
+export const FACT_EXTRACTION_PROMPT = `Extract new, important facts from the recent exchange that should be saved to the lorebook.
+
+{existingFactsSection}
+
+{temporalContext}
+
+Rules:
+- Extract ONLY new information not already captured in existing facts
+- Write facts in third-person, present-tense ("Character X is Y", "Location Z has W")
+- Focus on: character traits, relationships, world facts, locations, items, decisions, events
+- Skip trivial dialogue and unimportant moment-to-moment actions
+- Each fact needs a short title and 1-3 keywords
+
+{inputSection}
+
+Respond with ONLY a JSON array (no markdown, no code fences):
+[{"title": "short title", "content": "third-person fact", "when": "Day X, time", "keys": ["keyword"]}]`;

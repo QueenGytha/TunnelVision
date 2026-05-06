@@ -323,6 +323,31 @@ export const SETTING_DEFAULTS = {
     bookPermissions: {},
     // Compact tool prompts: register one guide tool + one-liner descriptions to save tokens
     compactToolPrompts: true,
+    // Post-turn autonomous processor
+    postTurnEnabled: false,
+    postTurnCooldown: 1,
+    postTurnExtractFacts: true,
+    postTurnUpdateTrackers: true,
+    postTurnSceneArchive: true,
+    // World state rolling narrative
+    worldStateEnabled: false,
+    worldStateInterval: 10,
+    worldStateMaxChars: 3000,
+    worldStateInjectionOverride: null,
+    worldStateUpdateOverride: null,
+    // Smart context pre-scored injection
+    smartContextEnabled: false,
+    smartContextLookback: 6,
+    smartContextMaxChars: 4000,
+    smartContextMaxEntries: 8,
+    // Memory lifecycle maintenance
+    lifecycleEnabled: false,
+    lifecycleInterval: 30,
+    lifecycleConsolidate: true,
+    lifecycleCompress: true,
+    lifecycleReorganize: true,
+    // Per-chat lorebooks
+    chatLorebooksEnabled: true,
 };
 
 function ensureSettings() {
@@ -607,6 +632,25 @@ export function canWriteBook(bookName) {
 
 export function isTrackerTitle(title) {
     return TRACKER_TITLE_PREFIX.test(String(title || '').trim());
+}
+
+const SUMMARY_TITLE_PREFIX = /^\[(?:scene\s+|act\s+|story\s+)?summary/i;
+
+export function isSummaryTitle(title) {
+    return SUMMARY_TITLE_PREFIX.test(String(title || '').trim());
+}
+
+export function ensureSummariesNode(bookName) {
+    const tree = getTree(bookName);
+    if (!tree || !tree.root) return null;
+
+    const existing = tree.root.children.find(c => c.label === 'Summaries');
+    if (existing) return existing.id;
+
+    const node = createTreeNode('Summaries', 'Archived scene, act, and story summaries');
+    tree.root.children.push(node);
+    saveTree(bookName, tree);
+    return node.id;
 }
 
 export function getTrackerUids(bookName) {
