@@ -35,6 +35,25 @@ let _initialized = false;
  * Register all /tv-* slash commands.
  * Safe to call multiple times — idempotency guard prevents duplicate registration.
  */
+/**
+ * Programmatically trigger a quiet summarize without UI toasts.
+ * Used by post-turn-processor to archive completed scenes.
+ * Returns null because generateQuietPrompt is fire-and-observe — the LLM
+ * will call TunnelVision_Summarize as a side effect but we can't intercept
+ * the tool result here. Callers must handle null gracefully.
+ * @param {string} bookName
+ * @param {Array} _chatSlice - ignored; ST injects chat context automatically
+ * @param {number} messagesBack
+ * @param {string} [titleHint]
+ * @returns {Promise<null>}
+ */
+export async function runQuietSummarize(bookName, _chatSlice, messagesBack, titleHint) {
+    const title = titleHint || 'Scene Archive';
+    const prompt = buildCommandPrompt({ command: 'summarize', arg: title }, messagesBack, [bookName], bookName);
+    await generateQuietPrompt(prompt);
+    return null;
+}
+
 export function initCommands() {
     if (_initialized) return;
     _initialized = true;

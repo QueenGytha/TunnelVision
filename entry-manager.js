@@ -552,25 +552,49 @@ export function parseJsonFromLLM(text, opts = {}) {
 
 // --- Temporal / versioning metadata ---
 
-export function recordEntryTemporal(entry, turnIndex) {
-    if (!entry) return;
-    entry.tvTurnIndex = Number(turnIndex) || 0;
+export function recordEntryTemporal(bookName, uid, { turnIndex, when } = {}) {
+    (async () => {
+        const data = await getCachedWorldInfo(bookName);
+        if (!data?.entries) return;
+        const entry = buildUidMap(data.entries).get(Number(uid));
+        if (!entry) return;
+        entry.tvTurnIndex = Number(turnIndex) || 0;
+        if (when) entry.tvWhen = when;
+        await saveWorldInfo(bookName, data, true);
+        invalidateWorldInfoCache(bookName);
+    })();
 }
 
-export function recordEntryVersion(entry) {
-    if (!entry) return;
-    if (!Array.isArray(entry.tvVersions)) entry.tvVersions = [];
-    entry.tvVersions.push({ content: entry.content, comment: entry.comment, ts: Date.now() });
-    if (entry.tvVersions.length > 10) entry.tvVersions.shift();
+export function recordEntryVersion(bookName, uid, { source, previousContent, previousTitle } = {}) {
+    (async () => {
+        const data = await getCachedWorldInfo(bookName);
+        if (!data?.entries) return;
+        const entry = buildUidMap(data.entries).get(Number(uid));
+        if (!entry) return;
+        if (!Array.isArray(entry.tvVersions)) entry.tvVersions = [];
+        entry.tvVersions.push({ source, content: previousContent, comment: previousTitle, ts: Date.now() });
+        if (entry.tvVersions.length > 5) entry.tvVersions.shift();
+        await saveWorldInfo(bookName, data, true);
+        invalidateWorldInfoCache(bookName);
+    })();
 }
 
-export function getEntryTurnIndex(entry) {
-    return entry?.tvTurnIndex ?? -1;
+export function getEntryTurnIndex(bookName, uid) {
+    const data = getCachedWorldInfoSync(bookName);
+    if (!data?.entries) return -1;
+    return buildUidMap(data.entries).get(Number(uid))?.tvTurnIndex ?? -1;
 }
 
-export function setEntrySupersedes(entry, uid) {
-    if (!entry) return;
-    entry.tvSupersedes = Number(uid);
+export function setEntrySupersedes(bookName, keepUid, removeUid) {
+    (async () => {
+        const data = await getCachedWorldInfo(bookName);
+        if (!data?.entries) return;
+        const entry = buildUidMap(data.entries).get(Number(keepUid));
+        if (!entry) return;
+        entry.tvSupersedes = Number(removeUid);
+        await saveWorldInfo(bookName, data, true);
+        invalidateWorldInfoCache(bookName);
+    })();
 }
 
 // --- Summary key builder ---
