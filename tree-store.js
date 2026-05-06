@@ -326,6 +326,7 @@ export const SETTING_DEFAULTS = {
     // Post-turn autonomous processor
     postTurnEnabled: true,
     postTurnCooldown: 1,
+    postTurnDelay: 10000,
     postTurnExtractFacts: true,
     postTurnUpdateTrackers: true,
     postTurnSceneArchive: true,

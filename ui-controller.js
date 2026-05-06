@@ -178,6 +178,7 @@ export function bindUIEvents() {
     // Post-turn processor
     $('#tv_post_turn_enabled').on('change', onPostTurnEnabledToggle);
     $('#tv_post_turn_cooldown').on('change', onPostTurnCooldownChange);
+    $('#tv_post_turn_delay').on('change', onPostTurnDelayChange);
     $('#tv_post_turn_facts').on('change', onPostTurnFactsToggle);
     $('#tv_post_turn_trackers').on('change', onPostTurnTrackersToggle);
     $('#tv_post_turn_scene').on('change', onPostTurnSceneToggle);
@@ -351,6 +352,7 @@ export function refreshUI() {
     $('#tv_post_turn_enabled').prop('checked', postTurnEnabled);
     $('#tv_post_turn_options').toggle(postTurnEnabled);
     $('#tv_post_turn_cooldown').val(settings.postTurnCooldown ?? 1);
+    $('#tv_post_turn_delay').val(Math.round((settings.postTurnDelay ?? 10000) / 1000));
     $('#tv_post_turn_facts').prop('checked', settings.postTurnExtractFacts !== false);
     $('#tv_post_turn_trackers').prop('checked', settings.postTurnUpdateTrackers !== false);
     $('#tv_post_turn_scene').prop('checked', settings.postTurnSceneArchive !== false);
@@ -996,6 +998,15 @@ function onPostTurnCooldownChange() {
     $('#tv_post_turn_cooldown').val(clamped);
     const settings = getSettings();
     settings.postTurnCooldown = clamped;
+    saveSettingsDebounced();
+}
+
+function onPostTurnDelayChange() {
+    const raw = Number($('#tv_post_turn_delay').val());
+    const clamped = Math.min(Math.max(Math.round(raw) || 0, 0), 60);
+    $('#tv_post_turn_delay').val(clamped);
+    const settings = getSettings();
+    settings.postTurnDelay = clamped * 1000;
     saveSettingsDebounced();
 }
 

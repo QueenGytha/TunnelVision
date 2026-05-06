@@ -89,6 +89,7 @@ let _swipePending = false;
 const _chatRef = { lastChatLength: 0, lastChatId: null };
 let _lastArchivedAt = 0;
 let _liveRollback = null;
+let _startupDelayTimer = null;
 
 // ── Persistence ──────────────────────────────────────────────────
 
@@ -1600,6 +1601,12 @@ function onAiMessageReceived() {
 
   if (isSwipe) {
     _chatRef.lastChatLength = chatLength;
+    // Cancel pending startup delay — no extraction ever started, nothing to roll back
+    if (_startupDelayTimer !== null) {
+      clearTimeout(_startupDelayTimer);
+      _startupDelayTimer = null;
+      return;
+    }
     if (_processorRunning) {
       _swipePending = true;
       if (_currentTask) _currentTask.cancelled = true;
@@ -1619,9 +1626,19 @@ function onAiMessageReceived() {
   _chatRef.lastChatLength = chatLength;
 
   if (shouldProcess()) {
-    runPostTurnProcessor().catch((e) => {
-      console.error("[TunnelVision] Background post-turn processor failed:", e);
-    });
+    const delay = Math.max(Number(getSettings().postTurnDelay) || 0, 0);
+    if (delay > 0) {
+      _startupDelayTimer = setTimeout(() => {
+        _startupDelayTimer = null;
+        runPostTurnProcessor().catch((e) => {
+          console.error("[TunnelVision] Background post-turn processor failed:", e);
+        });
+      }, delay);
+    } else {
+      runPostTurnProcessor().catch((e) => {
+        console.error("[TunnelVision] Background post-turn processor failed:", e);
+      });
+    }
   }
 }
 
