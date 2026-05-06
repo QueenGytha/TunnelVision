@@ -41,8 +41,6 @@ import { getActiveArcs } from "./arc-tracker.js";
 import { addBackgroundEvent, addEntryActivationEvents } from "./background-events.js";
 import {
   shuffleArray,
-  isActSummaryEntry,
-  isStorySummaryEntry,
   isSummaryEntry,
   isTrackerEntry,
   hashString,
@@ -62,18 +60,7 @@ import {
   PHASE_BUDGET_MULTIPLIERS,
 } from "./constants.js";
 
-// ── Summary Hierarchy (5A) lazy accessor ─────────────────────────
-
-let _getRolledUpSceneUids = () => new Set();
 const SMART_CONTEXT_LOG_PREFIX = "[TunnelVision][SmartContext]";
-
-/**
- * Initialize hierarchy references. Called once after module load to avoid circular imports.
- */
-export function initHierarchyRefs(refs) {
-  if (refs.getRolledUpSceneUids)
-    _getRolledUpSceneUids = refs.getRolledUpSceneUids;
-}
 
 // ── Pre-Warming Cache ────────────────────────────────────────────
 
@@ -222,7 +209,6 @@ export const TIER_COLD = "cold";
  * @param {Object} entry
  * @param {Object} opts
  * @param {boolean} opts.isTracker
- * @param {boolean} opts.isSummary
  * @param {Record<string, Object>} opts.feedbackMap
  * @param {Record<string, number>} opts.relevanceMap
  * @param {number} opts.chatLength
@@ -234,7 +220,6 @@ export function computeEntryTier(
   entry,
   {
     isTracker,
-    isSummary,
     feedbackMap,
     relevanceMap,
     chatLength,
@@ -243,10 +228,6 @@ export function computeEntryTier(
   },
 ) {
   if (isTracker) return TIER_HOT;
-
-  // 5A: Story summary is always hot; act summaries are warm
-  if (isStorySummaryEntry(entry)) return TIER_HOT;
-  if (isActSummaryEntry(entry)) return TIER_WARM;
 
   const fb = feedbackMap?.[entry.uid];
   const lastRef = fb?.lastReferenced || 0;
@@ -1020,13 +1001,6 @@ function computeScoringContext(activeBooks, recentText) {
 
   const chatLength = getContext().chat?.length || 0;
 
-  let rolledUpSceneUids;
-  try {
-    rolledUpSceneUids = _getRolledUpSceneUids();
-  } catch {
-    rolledUpSceneUids = new Set();
-  }
-
   return {
     relevanceMap,
     wsSignals,
@@ -1035,22 +1009,11 @@ function computeScoringContext(activeBooks, recentText) {
     maxUid,
     maxAllBonus,
     chatLength,
-    rolledUpSceneUids,
   };
 }
 
-function entryBaseThreshold(isTracker, isSummary, isActSummary) {
-  return isTracker ? 1 : isSummary || isActSummary ? 3 : 5;
-}
-
-function applySummaryHierarchyAdjustments(relevance, entry, isActSummary, isSummary, rolledUpSceneUids) {
-  if (isActSummary) {
-    return relevance + 5;
-  }
-  if (isSummary && rolledUpSceneUids.has(entry.uid)) {
-    return relevance - 10;
-  }
-  return relevance;
+function entryBaseThreshold(isTracker) {
+  return isTracker ? 1 : 5;
 }
 
 function collectMentionedEntryKeys(entry, presentKeySet, currentMentionKeys) {
@@ -1077,7 +1040,6 @@ function applyPrimaryScoringStages(relevance, entry, ctx) {
 function computeTierAdjustedScore(relevance, entry, opts) {
   const tier = computeEntryTier(entry, {
     isTracker: opts.isTracker,
-    isSummary: opts.isSummary,
     feedbackMap: opts.feedbackMap,
     relevanceMap: opts.relevanceMap,
     chatLength: opts.chatLength,
@@ -1094,41 +1056,15 @@ function computeTierAdjustedScore(relevance, entry, opts) {
 }
 
 function pushCandidateIfEligible(candidates, candidate, effectiveThreshold) {
-  const { entry, bookName, score, isTracker, isSummary, tier } = candidate;
+  const { entry, bookName, score, isTracker, tier } = candidate;
 
   if (isTracker && score > 0) {
-    candidates.push({
-      entry,
-      bookName,
-      score: score + 20,
-      isTracker: true,
-      isSummary: false,
-      tier,
-    });
-    return;
-  }
-
-  if (isSummary && score >= Math.min(effectiveThreshold, 3)) {
-    candidates.push({
-      entry,
-      bookName,
-      score: score + 2,
-      isTracker: false,
-      isSummary: true,
-      tier,
-    });
+    candidates.push({ entry, bookName, score: score + 20, isTracker: true, tier });
     return;
   }
 
   if (score >= effectiveThreshold) {
-    candidates.push({
-      entry,
-      bookName,
-      score,
-      isTracker,
-      isSummary,
-      tier,
-    });
+    candidates.push({ entry, bookName, score, isTracker, tier });
   }
 }
 
@@ -1173,7 +1109,7 @@ function applyPredictiveBoosts(candidates, currentMentionKeys) {
  * Tree proximity (2B) and predictive boost (3B) are applied as a second pass.
  * @param {string[]} activeBooks - Active TV-managed lorebook names
  * @param {string} recentText - Lowercased recent chat text
- * @returns {Array<{entry: Object, bookName: string, score: number, isTracker: boolean, isSummary: boolean, tier: string}>}
+ * @returns {Array<{entry: Object, bookName: string, score: number, isTracker: boolean, tier: string}>}
  */
 function scoreCandidates(activeBooks, recentText) {
   const candidates = [];
@@ -1197,32 +1133,13 @@ function scoreCandidates(activeBooks, recentText) {
       if (!entry.content || !entry.content.trim()) continue;
 
       const isTracker = trackerSet.has(entry.uid);
-      const isActSummary = isActSummaryEntry(entry);
-      const isStorySummary = isStorySummaryEntry(entry);
-      const isSummary = isSummaryEntry(entry);
 
-      if (isStorySummary) {
-        candidates.push({
-          entry,
-          bookName,
-          score: 50,
-          isTracker: false,
-          isSummary: true,
-          tier: TIER_HOT,
-        });
-        continue;
-      }
+      // Summaries are handled by the running recap — skip them here entirely
+      if (isSummaryEntry(entry)) continue;
 
       let relevance = scoreEntry(entry, recentText, presentKeySet);
-      relevance = applySummaryHierarchyAdjustments(
-        relevance,
-        entry,
-        isActSummary,
-        isSummary,
-        ctx.rolledUpSceneUids,
-      );
 
-      const threshold = entryBaseThreshold(isTracker, isSummary, isActSummary);
+      const threshold = entryBaseThreshold(isTracker);
       if (relevance + ctx.maxAllBonus < threshold) continue;
 
       if (relevance > 0) {
@@ -1235,7 +1152,6 @@ function scoreCandidates(activeBooks, recentText) {
 
       const tierResult = computeTierAdjustedScore(relevance, entry, {
         isTracker,
-        isSummary,
         feedbackMap: ctx.feedbackMap,
         relevanceMap: ctx.relevanceMap,
         chatLength: ctx.chatLength,
@@ -1251,7 +1167,6 @@ function scoreCandidates(activeBooks, recentText) {
           bookName,
           score: tierResult.score,
           isTracker,
-          isSummary,
           tier: tierResult.tier,
         },
         tierResult.effectiveThreshold,
@@ -1313,11 +1228,7 @@ function reportPreWarmCandidates(candidates, cacheKey, source = "smart-context")
     keys: Array.isArray(candidate.entry?.key) ? candidate.entry.key : [],
     score: Number(candidate.score) || 0,
     tier: candidate.tier || "",
-    summary: candidate.isTracker
-      ? "Tracker candidate"
-      : candidate.isSummary
-        ? "Summary candidate"
-        : "Lorebook candidate",
+    summary: candidate.isTracker ? "Tracker candidate" : "Lorebook candidate",
   }));
 
   const isFactDriven = source === 'fact-driven';
@@ -1369,14 +1280,9 @@ export function buildSmartContextPrompt() {
   const maxChars = computeDynamicBudget(candidates, settings, phase);
 
   // 1C: Score-density budget allocation
-  // Reserve slots for story summary + trackers, then fill by density
-  const storySummaryCand = candidates.find(
-    (c) => c.isSummary && isStorySummaryEntry(c.entry),
-  );
+  // Reserve slots for trackers, then fill by density
   const trackerCandidates = candidates.filter((c) => c.isTracker);
-  const nonTrackerCandidates = candidates.filter(
-    (c) => !c.isTracker && c !== storySummaryCand,
-  );
+  const nonTrackerCandidates = candidates.filter((c) => !c.isTracker);
 
   // Compute density (score per character) for non-tracker entries
   const withDensity = nonTrackerCandidates.map((c) => ({
@@ -1391,34 +1297,10 @@ export function buildSmartContextPrompt() {
   let totalChars = 0;
   let trackerSlots = 0;
 
-  // 5A: Story summary always gets first slot (guaranteed injection)
-  if (storySummaryCand) {
-    const entryText = formatEntryForInjection(
-      storySummaryCand.entry,
-      storySummaryCand.bookName,
-      false,
-      true,
-    );
-    selected.push(entryText);
-    selectedUids.push(storySummaryCand.entry.uid);
-    selectedEntryInfo.push({
-      uid: storySummaryCand.entry.uid,
-      title: (storySummaryCand.entry.comment || "").trim(),
-      keys: (storySummaryCand.entry.key || []).map((k) => String(k).trim()),
-      bookName: storySummaryCand.bookName,
-    });
-    totalChars += entryText.length;
-  }
-
-  // Then: include up to 2 tracker entries (reserved slots)
+  // Include up to 2 tracker entries (reserved slots)
   for (const c of trackerCandidates) {
     if (trackerSlots >= 2 || selected.length >= maxEntries) break;
-    const entryText = formatEntryForInjection(
-      c.entry,
-      c.bookName,
-      c.isTracker,
-      c.isSummary,
-    );
+    const entryText = formatEntryForInjection(c.entry, c.bookName, c.isTracker, false);
     if (totalChars + entryText.length > maxChars) continue;
 
     selected.push(entryText);
@@ -1433,15 +1315,10 @@ export function buildSmartContextPrompt() {
     trackerSlots++;
   }
 
-  // Then: fill remaining slots by density
+  // Fill remaining slots by density
   for (const c of withDensity) {
     if (selected.length >= maxEntries) break;
-    const entryText = formatEntryForInjection(
-      c.entry,
-      c.bookName,
-      c.isTracker,
-      c.isSummary,
-    );
+    const entryText = formatEntryForInjection(c.entry, c.bookName, c.isTracker, false);
     if (totalChars + entryText.length > maxChars) continue;
 
     selected.push(entryText);
@@ -1595,14 +1472,8 @@ function applyRerankResults(allCandidates, topN, response) {
 
 // ── Formatting ───────────────────────────────────────────────────
 
-function formatEntryForInjection(
-  entry,
-  bookName,
-  isTracker,
-  isSummary = false,
-  tier = TIER_WARM,
-) {
-  const tag = isTracker ? " [Tracker]" : isSummary ? " [Summary]" : "";
+function formatEntryForInjection(entry, bookName, isTracker, _unused = false, tier = TIER_WARM) {
+  const tag = isTracker ? " [Tracker]" : "";
   return `[${getEntryTitle(entry)}${tag} — ${bookName}, UID ${entry.uid}]\n${(entry.content || "").trim()}`;
 }
 

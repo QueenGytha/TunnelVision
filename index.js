@@ -38,6 +38,7 @@ import { initWorldState, buildWorldStatePrompt } from './world-state.js';
 import { initPostTurnProcessor } from './post-turn-processor.js';
 import { initMemoryLifecycle } from './memory-lifecycle.js';
 import { initSmartContext, buildSmartContextPrompt } from './smart-context.js';
+import { buildRunningRecapPrompt, clearRunningRecap } from './running-recap.js';
 
 const EXTENSION_NAME = 'tunnelvision';
 const EXTENSION_FOLDER = `third-party/TunnelVision`;
@@ -621,6 +622,7 @@ const TV_PROMPT_KEY = 'tunnelvision_mandatory';
 const TV_NOTEBOOK_KEY = 'tunnelvision_notebook';
 const TV_WORLDSTATE_KEY = 'tunnelvision_worldstate';
 const TV_SMARTCTX_KEY = 'tunnelvision_smartctx';
+const TV_RUNNING_RECAP_KEY = 'tunnelvision_running_recap';
 
 /**
  * Map a position setting string to the ST extension_prompt_types enum.
@@ -966,12 +968,20 @@ async function onGenerationStarted(type, opts, dryRun) {
         setExtensionPrompt(TV_WORLDSTATE_KEY, '', extension_prompt_types.IN_CHAT, 0, false, extension_prompt_roles.SYSTEM);
     }
 
-    // Smart context injection
+    // Smart context injection (facts and trackers only — summaries handled by running recap)
     if (settings.globalEnabled !== false && settings.smartContextEnabled) {
         const scPrompt = buildSmartContextPrompt();
         setExtensionPrompt(TV_SMARTCTX_KEY, scPrompt || '', extension_prompt_types.IN_CHAT, 0, false, extension_prompt_roles.SYSTEM);
     } else {
         setExtensionPrompt(TV_SMARTCTX_KEY, '', extension_prompt_types.IN_CHAT, 0, false, extension_prompt_roles.SYSTEM);
+    }
+
+    // Running recap injection — unconditional, no keyword gate
+    if (settings.globalEnabled !== false) {
+        const rrPrompt = buildRunningRecapPrompt();
+        setExtensionPrompt(TV_RUNNING_RECAP_KEY, rrPrompt || '', extension_prompt_types.IN_CHAT, 0, false, extension_prompt_roles.SYSTEM);
+    } else {
+        setExtensionPrompt(TV_RUNNING_RECAP_KEY, '', extension_prompt_types.IN_CHAT, 0, false, extension_prompt_roles.SYSTEM);
     }
 }
 

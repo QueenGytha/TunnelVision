@@ -891,15 +891,6 @@ async function archiveScene(targetBook, chat, sceneChange, chatId) {
         `[TunnelVision] Scene archived: "${summaryResult.title}" (${sceneChange.type}), messages up to #${sceneEndIdx}`,
       );
 
-      // 5A: Check if act/story rollup is needed
-      if (summaryResult.uid) {
-        try {
-          const { checkAndRollup } = await import("./summary-hierarchy.js");
-          await checkAndRollup(targetBook, summaryResult.uid);
-        } catch (e) {
-          console.warn("[TunnelVision] Summary hierarchy rollup failed:", e);
-        }
-      }
     }
   } catch (e) {
     console.warn("[TunnelVision] Scene archiving failed:", e);
