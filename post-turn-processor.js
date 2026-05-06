@@ -89,7 +89,6 @@ let _swipePending = false;
 const _chatRef = { lastChatLength: 0, lastChatId: null };
 let _lastArchivedAt = 0;
 let _liveRollback = null;
-let _startupDelayTimer = null;
 
 // ── Persistence ──────────────────────────────────────────────────
 
@@ -142,7 +141,9 @@ function getProcessingGateState() {
   const state = getProcessorState();
   const lastIdx = state?.lastProcessedMsgIdx ?? -1;
   const cooldown = Math.max(Number(settings.postTurnCooldown) || 1, 1);
-  const delta = chatLength - 1 - lastIdx;
+  // Use chatLength - 2 so the most recent AI response is never assessed —
+  // it only becomes fair game once the user has confirmed it by sending another message.
+  const delta = chatLength - 2 - lastIdx;
 
   if (delta <= 0) {
     return {
@@ -258,7 +259,7 @@ export async function runPostTurnProcessor(force = false) {
 
   const state = getProcessorState();
   const lastIdx = state?.lastProcessedMsgIdx ?? -1;
-  const msgsSinceLastProcess = Math.max(chat.length - 1 - lastIdx, 0);
+  const msgsSinceLastProcess = Math.max(chat.length - 2 - lastIdx, 0);
   const excerptCount = Math.min(msgsSinceLastProcess + 2, 10);
   const recentExcerpt = formatRecentExchange(chat, excerptCount);
 
@@ -380,7 +381,7 @@ export async function runPostTurnProcessor(force = false) {
 
     // Record completion + rollback data for swipe recovery
     setProcessorState({
-      lastProcessedMsgIdx: chat.length - 1,
+      lastProcessedMsgIdx: chat.length - 2,
       lastProcessedAt: Date.now(),
       lastResult: result,
       rollback: _liveRollback ? { ..._liveRollback } : null,
@@ -1601,12 +1602,6 @@ function onAiMessageReceived() {
 
   if (isSwipe) {
     _chatRef.lastChatLength = chatLength;
-    // Cancel pending startup delay — no extraction ever started, nothing to roll back
-    if (_startupDelayTimer !== null) {
-      clearTimeout(_startupDelayTimer);
-      _startupDelayTimer = null;
-      return;
-    }
     if (_processorRunning) {
       _swipePending = true;
       if (_currentTask) _currentTask.cancelled = true;
@@ -1626,19 +1621,9 @@ function onAiMessageReceived() {
   _chatRef.lastChatLength = chatLength;
 
   if (shouldProcess()) {
-    const delay = Math.max(Number(getSettings().postTurnDelay) || 0, 0);
-    if (delay > 0) {
-      _startupDelayTimer = setTimeout(() => {
-        _startupDelayTimer = null;
-        runPostTurnProcessor().catch((e) => {
-          console.error("[TunnelVision] Background post-turn processor failed:", e);
-        });
-      }, delay);
-    } else {
-      runPostTurnProcessor().catch((e) => {
-        console.error("[TunnelVision] Background post-turn processor failed:", e);
-      });
-    }
+    runPostTurnProcessor().catch((e) => {
+      console.error("[TunnelVision] Background post-turn processor failed:", e);
+    });
   }
 }
 
