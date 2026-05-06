@@ -32,7 +32,7 @@ import { initAutoSummary } from './auto-summary.js';
 import { runSidecarRetrieval } from './sidecar-retrieval.js';
 import { runSidecarWriter } from './sidecar-writer.js';
 import { separateConditions, isEvaluableCondition, formatCondition, EVALUABLE_TYPES, CONDITION_LABELS, getKeywordProbability, setKeywordProbability } from './conditions.js';
-import { loadWorldInfo, saveWorldInfo, world_names, createNewWorldInfo, updateWorldInfoList, createWorldInfoEntry, METADATA_KEY } from '../../../world-info.js';
+import { loadWorldInfo, saveWorldInfo, world_names, createNewWorldInfo, updateWorldInfoList, createWorldInfoEntry, deleteWorldInfo, METADATA_KEY } from '../../../world-info.js';
 import { invalidateDirtyWorldInfoCache } from './entry-manager.js';
 import { initWorldState, buildWorldStatePrompt } from './world-state.js';
 import { initPostTurnProcessor } from './post-turn-processor.js';
@@ -173,6 +173,13 @@ async function init() {
     }
     if (event_types.CONNECTION_PROFILE_UPDATED) {
         eventSource.on(event_types.CONNECTION_PROFILE_UPDATED, () => refreshUI());
+    }
+
+    if (event_types.CHAT_DELETED) {
+        eventSource.on(event_types.CHAT_DELETED, onChatDeleted);
+    }
+    if (event_types.GROUP_CHAT_DELETED) {
+        eventSource.on(event_types.GROUP_CHAT_DELETED, onChatDeleted);
     }
 
     console.log('[TunnelVision] Extension loaded');
@@ -1015,6 +1022,28 @@ async function onMessageReceived(_messageId, type) {
  * Ensure a per-chat TV-managed lorebook exists and is enabled.
  * Named "TV - {char} - {shortChatId}". Seeded from other TV-managed lorebooks on first creation.
  */
+async function onChatDeleted(deletedChatId) {
+    if (!deletedChatId) return;
+    const settings = getSettings();
+    if (!settings.chatLorebooksEnabled) return;
+
+    // Reconstruct the lorebook name using the same formula as ensureChatLorebook
+    const parts = String(deletedChatId).split(' - ');
+    const charName = (parts[0] || deletedChatId).replace(/[/\\:*?"<>|]/g, '_');
+    const shortId = String(deletedChatId).slice(-8);
+    const bookName = `TV - ${charName} - ${shortId}`;
+
+    if (!world_names.includes(bookName)) return;
+
+    try {
+        await deleteWorldInfo(bookName);
+        await updateWorldInfoList();
+        console.log(`[TunnelVision] Deleted lorebook for deleted chat: "${bookName}"`);
+    } catch (e) {
+        console.error(`[TunnelVision] Failed to delete lorebook "${bookName}":`, e);
+    }
+}
+
 async function ensureChatLorebook() {
     const settings = getSettings();
     if (!settings.chatLorebooksEnabled) return;
