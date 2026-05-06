@@ -179,7 +179,13 @@ async function init() {
 
 async function onChatChanged() {
     autoDetectLorebooks();
-    await ensureChatLorebook();
+    // Only create the lorebook for existing chats (those with messages already).
+    // New chats get their lorebook on the first GENERATION_STARTED instead,
+    // so we don't litter the lorebook list just from opening a blank chat.
+    const context = getContext();
+    if (context.chat?.length > 0) {
+        await ensureChatLorebook();
+    }
     refreshUI();
     await registerTools();
 }
@@ -883,6 +889,10 @@ async function onGenerationStarted(type, opts, dryRun) {
     // a matching assistant reply). Only on first pass — on recursive passes
     // the tail message IS the active tool result, not an orphan.
     cleanOrphanedToolInvocations();
+
+    // Ensure the per-chat lorebook exists before preflighting tools — covers the
+    // first-message case where onChatChanged skipped creation for a new chat.
+    await ensureChatLorebook();
 
     if (settings.globalEnabled !== false) {
         runtimeState = await preflightToolRuntimeState({ repair: true, reason: 'generation', log: true });
