@@ -172,6 +172,34 @@ export function bindUIEvents() {
     $('#tv_passthrough_constant').on('change', onPassthroughConstantToggle);
     $('#tv_allow_keyword_triggers').on('change', onAllowKeywordTriggersToggle);
 
+    // Per-chat lorebooks
+    $('#tv_chat_lorebooks_enabled').on('change', onChatLorebooksEnabledToggle);
+
+    // Post-turn processor
+    $('#tv_post_turn_enabled').on('change', onPostTurnEnabledToggle);
+    $('#tv_post_turn_cooldown').on('change', onPostTurnCooldownChange);
+    $('#tv_post_turn_facts').on('change', onPostTurnFactsToggle);
+    $('#tv_post_turn_trackers').on('change', onPostTurnTrackersToggle);
+    $('#tv_post_turn_scene').on('change', onPostTurnSceneToggle);
+
+    // World state
+    $('#tv_world_state_enabled').on('change', onWorldStateEnabledToggle);
+    $('#tv_world_state_interval').on('change', onWorldStateIntervalChange);
+    $('#tv_world_state_max_chars').on('change', onWorldStateMaxCharsChange);
+
+    // Smart context
+    $('#tv_smart_context_enabled').on('change', onSmartContextEnabledToggle);
+    $('#tv_smart_context_lookback').on('change', onSmartContextLookbackChange);
+    $('#tv_smart_context_max_chars').on('change', onSmartContextMaxCharsChange);
+    $('#tv_smart_context_max_entries').on('change', onSmartContextMaxEntriesChange);
+
+    // Memory lifecycle
+    $('#tv_lifecycle_enabled').on('change', onLifecycleEnabledToggle);
+    $('#tv_lifecycle_interval').on('change', onLifecycleIntervalChange);
+    $('#tv_lifecycle_consolidate').on('change', onLifecycleConsolidateToggle);
+    $('#tv_lifecycle_compress').on('change', onLifecycleCompressToggle);
+    $('#tv_lifecycle_reorganize').on('change', onLifecycleReorganizeToggle);
+
     // Multi-book mode
     $('input[name="tv_multi_book_mode"]').on('change', onMultiBookModeChange);
 
@@ -314,6 +342,42 @@ export function refreshUI() {
     $('#tv_auto_hide_summarized').prop('checked', settings.autoHideSummarized !== false);
     $('#tv_passthrough_constant').prop('checked', settings.passthroughConstant !== false);
     $('#tv_allow_keyword_triggers').prop('checked', settings.allowKeywordTriggers === true);
+
+    // Sync per-chat lorebooks
+    $('#tv_chat_lorebooks_enabled').prop('checked', settings.chatLorebooksEnabled !== false);
+
+    // Sync post-turn processor
+    const postTurnEnabled = settings.postTurnEnabled === true;
+    $('#tv_post_turn_enabled').prop('checked', postTurnEnabled);
+    $('#tv_post_turn_options').toggle(postTurnEnabled);
+    $('#tv_post_turn_cooldown').val(settings.postTurnCooldown ?? 1);
+    $('#tv_post_turn_facts').prop('checked', settings.postTurnExtractFacts !== false);
+    $('#tv_post_turn_trackers').prop('checked', settings.postTurnUpdateTrackers !== false);
+    $('#tv_post_turn_scene').prop('checked', settings.postTurnSceneArchive !== false);
+
+    // Sync world state
+    const worldStateEnabled = settings.worldStateEnabled === true;
+    $('#tv_world_state_enabled').prop('checked', worldStateEnabled);
+    $('#tv_world_state_options').toggle(worldStateEnabled);
+    $('#tv_world_state_interval').val(settings.worldStateInterval ?? 10);
+    $('#tv_world_state_max_chars').val(settings.worldStateMaxChars ?? 3000);
+
+    // Sync smart context
+    const smartContextEnabled = settings.smartContextEnabled === true;
+    $('#tv_smart_context_enabled').prop('checked', smartContextEnabled);
+    $('#tv_smart_context_options').toggle(smartContextEnabled);
+    $('#tv_smart_context_lookback').val(settings.smartContextLookback ?? 6);
+    $('#tv_smart_context_max_chars').val(settings.smartContextMaxChars ?? 4000);
+    $('#tv_smart_context_max_entries').val(settings.smartContextMaxEntries ?? 8);
+
+    // Sync memory lifecycle
+    const lifecycleEnabled = settings.lifecycleEnabled === true;
+    $('#tv_lifecycle_enabled').prop('checked', lifecycleEnabled);
+    $('#tv_lifecycle_options').toggle(lifecycleEnabled);
+    $('#tv_lifecycle_interval').val(settings.lifecycleInterval ?? 30);
+    $('#tv_lifecycle_consolidate').prop('checked', settings.lifecycleConsolidate !== false);
+    $('#tv_lifecycle_compress').prop('checked', settings.lifecycleCompress !== false);
+    $('#tv_lifecycle_reorganize').prop('checked', settings.lifecycleReorganize !== false);
 
     // Sync multi-book mode
     $(`input[name="tv_multi_book_mode"][value="${settings.multiBookMode || 'unified'}"]`).prop('checked', true);
@@ -905,6 +969,153 @@ function onAllowKeywordTriggersToggle() {
     const enabled = $(this).prop('checked');
     const settings = getSettings();
     settings.allowKeywordTriggers = enabled;
+    saveSettingsDebounced();
+}
+
+// ─── Per-Chat Lorebooks ──────────────────────────────────────────
+
+function onChatLorebooksEnabledToggle() {
+    const settings = getSettings();
+    settings.chatLorebooksEnabled = $(this).prop('checked');
+    saveSettingsDebounced();
+}
+
+// ─── Post-Turn Processor ─────────────────────────────────────────
+
+function onPostTurnEnabledToggle() {
+    const enabled = $(this).prop('checked');
+    const settings = getSettings();
+    settings.postTurnEnabled = enabled;
+    $('#tv_post_turn_options').toggle(enabled);
+    saveSettingsDebounced();
+}
+
+function onPostTurnCooldownChange() {
+    const raw = Number($('#tv_post_turn_cooldown').val());
+    const clamped = Math.min(Math.max(Math.round(raw) || 1, 1), 20);
+    $('#tv_post_turn_cooldown').val(clamped);
+    const settings = getSettings();
+    settings.postTurnCooldown = clamped;
+    saveSettingsDebounced();
+}
+
+function onPostTurnFactsToggle() {
+    const settings = getSettings();
+    settings.postTurnExtractFacts = $(this).prop('checked');
+    saveSettingsDebounced();
+}
+
+function onPostTurnTrackersToggle() {
+    const settings = getSettings();
+    settings.postTurnUpdateTrackers = $(this).prop('checked');
+    saveSettingsDebounced();
+}
+
+function onPostTurnSceneToggle() {
+    const settings = getSettings();
+    settings.postTurnSceneArchive = $(this).prop('checked');
+    saveSettingsDebounced();
+}
+
+// ─── World State ─────────────────────────────────────────────────
+
+function onWorldStateEnabledToggle() {
+    const enabled = $(this).prop('checked');
+    const settings = getSettings();
+    settings.worldStateEnabled = enabled;
+    $('#tv_world_state_options').toggle(enabled);
+    saveSettingsDebounced();
+}
+
+function onWorldStateIntervalChange() {
+    const raw = Number($('#tv_world_state_interval').val());
+    const clamped = Math.min(Math.max(Math.round(raw) || 10, 1), 100);
+    $('#tv_world_state_interval').val(clamped);
+    const settings = getSettings();
+    settings.worldStateInterval = clamped;
+    saveSettingsDebounced();
+}
+
+function onWorldStateMaxCharsChange() {
+    const raw = Number($('#tv_world_state_max_chars').val());
+    const clamped = Math.min(Math.max(Math.round(raw) || 3000, 500), 20000);
+    $('#tv_world_state_max_chars').val(clamped);
+    const settings = getSettings();
+    settings.worldStateMaxChars = clamped;
+    saveSettingsDebounced();
+}
+
+// ─── Smart Context ───────────────────────────────────────────────
+
+function onSmartContextEnabledToggle() {
+    const enabled = $(this).prop('checked');
+    const settings = getSettings();
+    settings.smartContextEnabled = enabled;
+    $('#tv_smart_context_options').toggle(enabled);
+    saveSettingsDebounced();
+}
+
+function onSmartContextLookbackChange() {
+    const raw = Number($('#tv_smart_context_lookback').val());
+    const clamped = Math.min(Math.max(Math.round(raw) || 6, 1), 50);
+    $('#tv_smart_context_lookback').val(clamped);
+    const settings = getSettings();
+    settings.smartContextLookback = clamped;
+    saveSettingsDebounced();
+}
+
+function onSmartContextMaxCharsChange() {
+    const raw = Number($('#tv_smart_context_max_chars').val());
+    const clamped = Math.min(Math.max(Math.round(raw) || 4000, 500), 20000);
+    $('#tv_smart_context_max_chars').val(clamped);
+    const settings = getSettings();
+    settings.smartContextMaxChars = clamped;
+    saveSettingsDebounced();
+}
+
+function onSmartContextMaxEntriesChange() {
+    const raw = Number($('#tv_smart_context_max_entries').val());
+    const clamped = Math.min(Math.max(Math.round(raw) || 8, 1), 50);
+    $('#tv_smart_context_max_entries').val(clamped);
+    const settings = getSettings();
+    settings.smartContextMaxEntries = clamped;
+    saveSettingsDebounced();
+}
+
+// ─── Memory Lifecycle ────────────────────────────────────────────
+
+function onLifecycleEnabledToggle() {
+    const enabled = $(this).prop('checked');
+    const settings = getSettings();
+    settings.lifecycleEnabled = enabled;
+    $('#tv_lifecycle_options').toggle(enabled);
+    saveSettingsDebounced();
+}
+
+function onLifecycleIntervalChange() {
+    const raw = Number($('#tv_lifecycle_interval').val());
+    const clamped = Math.min(Math.max(Math.round(raw) || 30, 5), 500);
+    $('#tv_lifecycle_interval').val(clamped);
+    const settings = getSettings();
+    settings.lifecycleInterval = clamped;
+    saveSettingsDebounced();
+}
+
+function onLifecycleConsolidateToggle() {
+    const settings = getSettings();
+    settings.lifecycleConsolidate = $(this).prop('checked');
+    saveSettingsDebounced();
+}
+
+function onLifecycleCompressToggle() {
+    const settings = getSettings();
+    settings.lifecycleCompress = $(this).prop('checked');
+    saveSettingsDebounced();
+}
+
+function onLifecycleReorganizeToggle() {
+    const settings = getSettings();
+    settings.lifecycleReorganize = $(this).prop('checked');
     saveSettingsDebounced();
 }
 
