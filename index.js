@@ -46,6 +46,10 @@ const EXTENSION_FOLDER = `third-party/TunnelVision`;
 // (lorebook saves from tool actions trigger this event mid-generation).
 let _generationInProgress = false;
 
+// Debounce timer for WORLDINFO_UPDATED — rapid saves (e.g. post-turn writing 5 entries)
+// each fire this event. Collapse them into one registerTools() call.
+let _worldInfoUpdateTimer = null;
+
 // Tracks recursion depth for tool-call passes within a single generation turn.
 // ST's Generate() increments depth internally but doesn't expose it to extensions,
 // so we mirror it here to know when we're on the final pass.
@@ -209,14 +213,11 @@ function autoDetectLorebooks() {
     }
 }
 
-async function onWorldInfoUpdated() {
-    console.debug(`[TunnelVision] WORLDINFO_UPDATED fired (generationInProgress=${_generationInProgress})`);
+function onWorldInfoUpdated() {
     refreshUI();
-    if (_generationInProgress) {
-        console.debug('[TunnelVision] Skipping tool re-registration during active generation');
-        return;
-    }
-    await registerTools();
+    if (_generationInProgress) return;
+    clearTimeout(_worldInfoUpdateTimer);
+    _worldInfoUpdateTimer = setTimeout(() => registerTools(), 500);
 }
 
 async function onAppReady() {
